@@ -1,0 +1,78 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user which can be an admin or a salesperson.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "The Firebase Auth UID of the user."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "The email address the user uses to sign in."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "The full name of the user."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "salesperson"],
+          "description": "The role of the user determining their permissions."
+        },
+        "receptionEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "The office/reception email this salesperson should send internal quotes to."
+        },
+        "salespersonPersonalEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "The personal email of the salesperson to receive their own copy."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["email", "role"]
+    },
+    "QuoteRecord": {
+      "title": "Quote Record",
+      "description": "A record of a generated quote for auditing and history.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "salespersonUid": { "type": "string" },
+        "salespersonEmail": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "customerName", "salespersonUid", "totalAmount", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Storage for user profiles and roles."
+    },
+    "/quotes/{quoteId}": {
+      "schema": "QuoteRecord",
+      "description": "Historical records of quotes sent."
+    },
+    "/counters/{counterId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "lastValue": { "type": "number" }
+        }
+      },
+      "description": "Atomic counters for sequential IDs."
+    }
+  }
+}

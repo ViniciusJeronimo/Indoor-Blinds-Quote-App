@@ -1,0 +1,103 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (Auth UID)
+    // Fields:
+    //   - uid: string (optional)
+    //   - email: string (required) - format: email
+    //   - displayName: string (optional)
+    //   - role: string (required) - enum: ['admin', 'salesperson']
+    //   - receptionEmail: string (optional) - format: email
+    //   - salespersonPersonalEmail: string (optional) - format: email
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: quotes
+    // Document ID: quoteId
+    // Fields:
+    //   - id: string
+    //   - customerName: string
+    //   - customerEmail: string
+    //   - salespersonUid: string
+    //   - salespersonEmail: string
+    //   - totalAmount: number
+    //   - createdAt: timestamp
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (request.auth.token.email == "viniciusjosilva@gmail.com" && request.auth.token.email_verified == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role', 'createdAt']) &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'salesperson'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidQuote(data) {
+      return data.keys().hasAll(['id', 'customerName', 'salespersonUid', 'totalAmount', 'createdAt']) &&
+             data.id is string &&
+             data.customerName is string &&
+             data.salespersonUid == request.auth.uid &&
+             data.totalAmount is number &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidCounter(data) {
+      return data.keys().hasAll(['lastValue']) && data.lastValue is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      
+      allow create: if isAdmin() && isValidUser(request.resource.data);
+      
+      allow update: if (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role)) && 
+                     isValidUser(request.resource.data);
+      
+      allow delete: if isAdmin();
+    }
+
+    match /quotes/{quoteId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.salespersonUid == request.auth.uid);
+      allow create: if isAuthenticated() && isValidQuote(request.resource.data);
+      allow update, delete: if isAdmin();
+    }
+
+    match /counters/{counterId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidCounter(request.resource.data);
+    }
+  }
+}
