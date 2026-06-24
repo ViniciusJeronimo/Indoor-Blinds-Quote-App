@@ -1,0 +1,142 @@
+import { db } from '../firebase';
+import {
+  collection, doc, setDoc, getDocs, query,
+  where, orderBy, serverTimestamp, deleteDoc
+} from 'firebase/firestore';
+import { Quote, SavedQuoteRecord } from '../types';
+
+const LOCAL_STORAGE_KEY = 'blindsquote_saved_quotes';
+
+// ─── LOCAL STORAGE HELPERS ────────────────────────────────────────
+
+function getLocalQuotes(): SavedQuoteRecord[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function setLocalQuotes(quotes: SavedQuoteRecord[]) {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(quotes));
+  } catch (e) {
+    console.warn('[Storage] localStorage write failed:', e);
+  }
+}
+
+function buildRecord(quote: Quote, salespersonUid: string, salespersonEmail: string, total: number): SavedQuoteRecord {
+  return {
+    id: quote.id,
+    customerName: `${quote.customer.firstName} ${quote.customer.lastName}`.trim(),
+    customerEmail: quote.customer.email,
+    customerNumber: quote.customer.customerNumber,
+    salespersonUid,
+    salespersonEmail,
+    totalAmount: total,
+    blindCount: quote.blinds.length,
+    quoteData: JSON.stringify(quote),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+// ─── SAVE ─────────────────────────────────────────────────────────
+
+export async function saveQuote(
+  quote: Quote,
+  salespersonUid: string,
+  salespersonEmail: string,
+  total: number
+): Promise<{ success: boolean; firestoreOk: boolean; localOk: boolean }> {
+  const record = buildRecord(quote, salespersonUid, salespersonEmail, total);
+  let firestoreOk = false;
+  let localOk = false;
+
+  // 1. Try Firestore
+  try {
+    await setDoc(doc(db, 'quotes', record.id), {
+      ...record,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    firestoreOk = true;
+  } catch (error) {
+    console.error('[Storage] Firestore save failed:', error);
+  }
+
+  // 2. Always save to localStorage as backup
+  try {
+    const existing = getLocalQuotes();
+    const idx = existing.findIndex(q => q.id === record.id);
+    if (idx >= 0) {
+      existing[idx] = record;
+    } else {
+      existing.unshift(record); // newest first
+    }
+    // Keep last 100 quotes locally
+    setLocalQuotes(existing.slice(0, 100));
+    localOk = true;
+  } catch (error) {
+    console.error('[Storage] localStorage save failed:', error);
+  }
+
+  return { success: firestoreOk || localOk, firestoreOk, localOk };
+}
+
+// ─── LOAD ─────────────────────────────────────────────────────────
+
+export async function loadQuotes(salespersonUid: string): Promise<SavedQuoteRecord[]> {
+  // Try Firestore first
+  try {
+    const q = query(
+      collection(db, 'quotes'),
+      where('salespersonUid', '==', salespersonUid),
+      orderBy('createdAt', 'desc')
+    );
+    const snapshot = await getDocs(q);
+    const firestoreQuotes = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as SavedQuoteRecord));
+
+    // Merge with local (Firestore wins on conflict)
+    const local = getLocalQuotes().filter(q => q.salespersonUid === salespersonUid);
+    const firestoreIds = new Set(firestoreQuotes.map(q => q.id));
+    const localOnly = local.filter(q => !firestoreIds.has(q.id));
+
+    return [...firestoreQuotes, ...localOnly].sort((a, b) => {
+      const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 0;
+      const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    });
+  } catch (error) {
+    console.warn('[Storage] Firestore load failed, falling back to localStorage:', error);
+    return getLocalQuotes().filter(q => q.salespersonUid === salespersonUid);
+  }
+}
+
+// ─── DELETE ───────────────────────────────────────────────────────
+
+export async function deleteQuote(quoteId: string): Promise<void> {
+  // Remove from Firestore
+  try {
+    await deleteDoc(doc(db, 'quotes', quoteId));
+  } catch (error) {
+    console.warn('[Storage] Firestore delete failed:', error);
+  }
+
+  // Remove from localStorage
+  const existing = getLocalQuotes();
+  setLocalQuotes(existing.filter(q => q.id !== quoteId));
+}
+
+// ─── PARSE SAVED QUOTE BACK TO QUOTE OBJECT ──────────────────────
+
+export function parseQuoteRecord(record: SavedQuoteRecord): Quote | null {
+  try {
+    const q = JSON.parse(record.quoteData) as Quote;
+    q.createdAt = new Date(q.createdAt);
+    return q;
+  } catch {
+    return null;
+  }
+}
