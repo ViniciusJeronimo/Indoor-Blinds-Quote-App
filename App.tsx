@@ -7,7 +7,8 @@ import QuoteSummary from './components/QuoteSummary';
 import BlindDetailModal from './components/BlindDetailModal';
 import Login from './components/Login';
 import AdminDashboard from './components/AdminDashboard';
-import { saveQuoteToDrive, downloadQuoteAsJson } from './services/driveService';
+import { saveQuote, loadQuotes, parseQuoteRecord } from './services/quoteStorageService';
+import { SavedQuoteRecord } from './types';
 import { generateQuoteEmail } from './services/geminiService';
 import { generateCustomerCopyPDF, generateCompanyCopyPDF, getPDFBase64 } from './services/pdfService';
 import { auth, db } from './firebase';
@@ -61,7 +62,11 @@ const App: React.FC = () => {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'contact' | 'items' | 'summary'>('contact');
   const [isCounterLoading, setIsCounterLoading] = useState(false);
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  
+  const [savedQuotes, setSavedQuotes] = useState<SavedQuoteRecord[]>([]);
+  const [showQuoteHistory, setShowQuoteHistory] = useState(false);
+  const [isSaveStatusVisible, setIsSaveStatusVisible] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Helper to format customer number as 6 digits
   const formatCustomerNumber = (num: number) => {
@@ -277,8 +282,41 @@ const App: React.FC = () => {
   });
 
   const handleSave = async () => {
+    if (!user) return;
     setIsSaving(true);
     const quote = createQuoteObject();
+    const { firestoreOk, localOk } = await saveQuote(quote, user.uid, user.email ?? '', total);
+    setIsSaving(false);
+    if (firestoreOk) {
+      setSaveMessage('✓ Saved to cloud & device');
+    } else if (localOk) {
+      setSaveMessage('✓ Saved to device (offline — will sync when online)');
+    } else {
+      setSaveMessage('✗ Save failed — please try again');
+    }
+    setIsSaveStatusVisible(true);
+    setTimeout(() => setIsSaveStatusVisible(false), 4000);
+  };
+
+  const handleLoadHistory = async () => {
+    if (!user) return;
+    const quotes = await loadQuotes(user.uid);
+    setSavedQuotes(quotes);
+    setShowQuoteHistory(true);
+  };
+
+  const handleRestoreQuote = (record: SavedQuoteRecord) => {
+    const q = parseQuoteRecord(record);
+    if (!q) return;
+    setCustomer(q.customer);
+    setBlinds(q.blinds);
+    setFittingIncluded(q.fittingIncluded ?? false);
+    setTakedowns(q.takedowns ?? 0);
+    setTakedownsIncluded(q.takedownsIncluded ?? false);
+    setDiscountInput(0);
+    setShowQuoteHistory(false);
+    setActiveTab('items');
+  };
     
     // Simulate Drive Save
     await saveQuoteToDrive(quote);
@@ -427,25 +465,12 @@ Proceed?`;
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
           <div className="flex items-center space-x-3">
-            <motion.div 
-                whileHover={{ scale: 1.05, rotate: 0 }}
-                whileTap={{ scale: 0.95 }}
-                className="relative cursor-pointer group"
-            >
-                <div className="w-16 h-16 bg-gradient-to-br from-brand-600 via-brand-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-xl transform rotate-6 border-2 border-white/30 overflow-hidden">
-                    {/* Decorative glass flare */}
-                    <div className="absolute inset-0 bg-gradient-to-tr from-white/10 to-transparent opacity-50" />
-                    
-                    {/* Animated dot */}
-                    <div className="absolute top-2 right-2 w-2 h-2 bg-yellow-400 rounded-full animate-pulse shadow-[0_0_10px_rgba(250,204,21,0.5)]" />
-                    
-                    <span className="text-white font-black text-2xl tracking-tighter drop-shadow-md z-10 transition-transform group-hover:scale-110">VJ</span>
-                    
-                    {/* Decorative stripes */}
-                    <div className="absolute -bottom-1 -left-1 w-8 h-8 border-t-2 border-r-2 border-white/10 rounded-tr-lg" />
-                </div>
-            </motion.div>
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">BlindsQuote Pro</h1>
+            <div className="w-10 h-10 bg-brand-600 rounded-xl flex items-center justify-center shadow-md">
+    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
+    </svg>
+</div>
+<h1 className="text-2xl font-bold text-gray-900 tracking-tight">Quote Pro</h1>
           </div>
           <div className="flex items-center space-x-4">
             <div className="text-sm text-gray-500 hidden sm:block">
@@ -470,6 +495,15 @@ Proceed?`;
                 <Plus className="w-4 h-4" />
                 <span className="text-xs font-black uppercase tracking-wider">New Quote</span>
             </motion.button>
+            <button
+    onClick={handleLoadHistory}
+    className="p-2 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+    title="Quote History"
+>
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+</button>
             <button 
                 onClick={() => setShowSettings(!showSettings)}
                 className={`p-2 rounded-full transition-colors ${showSettings ? 'bg-brand-100 text-brand-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
@@ -853,6 +887,51 @@ Proceed?`;
       {/* Admin Panel */}
       {isAdminPanelOpen && (
         <AdminDashboard onClose={() => setIsAdminPanelOpen(false)} />
+      {/* Save status toast */}
+      {isSaveStatusVisible && (
+        <div className="fixed bottom-24 right-4 z-50 bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-lg animate-in slide-in-from-bottom-4">
+          {saveMessage}
+        </div>
+      )}
+
+      {/* Quote History Modal */}
+      {showQuoteHistory && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
+            <div className="bg-brand-600 px-6 py-4 flex justify-between items-center shrink-0">
+              <h2 className="text-lg font-bold text-white">Saved Quotes</h2>
+              <button onClick={() => setShowQuoteHistory(false)} className="text-brand-100 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
+              {savedQuotes.length === 0 ? (
+                <div className="py-12 text-center text-gray-400 italic">No saved quotes found.</div>
+              ) : savedQuotes.map(record => (
+                <div key={record.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                  <div>
+                    <p className="font-bold text-gray-900 text-sm">{record.customerName || 'Unnamed'}</p>
+                    <p className="text-xs text-gray-500">
+                      #{String(record.customerNumber).padStart(6, '0')} · {record.blindCount} items · ${record.totalAmount.toFixed(2)}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      {typeof record.createdAt === 'string'
+                        ? new Date(record.createdAt).toLocaleDateString()
+                        : 'Unknown date'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleRestoreQuote(record)}
+                    className="text-xs font-bold text-brand-600 hover:text-brand-800 px-3 py-1.5 border border-brand-200 rounded-lg hover:bg-brand-50 transition-colors"
+                  >
+                    Load
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       )}
 
       {/* Reset Confirmation Modal */}
