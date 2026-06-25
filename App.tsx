@@ -318,18 +318,7 @@ const App: React.FC = () => {
     setActiveTab('items');
   };
     
-    // Simulate Drive Save
-    await saveQuoteToDrive(quote);
-    setIsSaving(false);
-    alert('Quote saved to "ABC Clients" folder!');
-  };
-
-  const handleDownload = () => {
-     const quote = createQuoteObject();
-    downloadQuoteAsJson(quote);
-  };
-
-  const handleGenerateEmail = async () => {
+    const handleGenerateEmail = async () => {
     setEmailStatus('generating');
     const quote = createQuoteObject();
     const emailBody = await generateQuoteEmail(quote);
